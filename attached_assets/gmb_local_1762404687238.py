@@ -1,0 +1,255 @@
+# import pandas as pd
+# import http.client
+# import json
+# import time
+# from collections import defaultdict
+# import os
+
+# # ------------------- Part 1: Read keywords from CSV -------------------
+
+# # Define the file path
+# file_path = r'C:/Users/SuryaRaghupathy/OneDrive - Nurtur Limited/Desktop/Git code import/portfolio-website/public/webscrappeddata/gmb local scraper/queries.csv'
+
+# # Load the CSV into a DataFrame
+# df = pd.read_csv(file_path)
+
+# # Extract keywords into a list
+# if 'Keywords' in df.columns:
+#     keyword_list = df['Keywords'].dropna().tolist()
+#     print("✅ Keywords loaded:")
+#     for kw in keyword_list:
+#         print("  -", kw)
+# else:
+#     print("❌ Column 'Keywords' not found in the CSV.")
+#     exit()
+
+# # ------------------- Part 2: API Request for Each Keyword -------------------
+
+# conn = http.client.HTTPSConnection("google.serper.dev")
+# api_key = '99c0f74413eb8a1e9c04956169fe25dae1601a17'  # Use your actual API key
+# headers = {
+#     'X-API-KEY': api_key,
+#     'Content-Type': 'application/json'
+# }
+
+# # Store all results
+# all_results = []
+
+# # Loop over each keyword
+# for query in keyword_list:
+#     print(f"\n🔍 Searching for: {query}")
+#     page = 1
+#     query_result_index = 1  # Track continuous result number per query
+
+#     while True:
+#         payload = json.dumps({
+#             "q": query,
+#             "location": "United Kingdom",
+#             "gl": "gb",
+#             "page": page
+#         })
+
+#         conn.request("POST", "/places", payload, headers)
+#         res = conn.getresponse()
+#         data = res.read()
+#         decoded_data = data.decode("utf-8")
+#         json_data = json.loads(decoded_data)
+
+#         places = json_data.get("places", [])
+
+#         if not places:
+#             print(f"✅ No more results for '{query}' on page {page}.")
+#             break
+
+#         print(f"📄 Page {page}: Found {len(places)} places.")
+#         for place in places:
+#             place['query'] = query
+#             place['query_result_number'] = query_result_index  # Add position number
+#             all_results.append(place)
+#             query_result_index += 1
+
+#         page += 1
+#         time.sleep(1)
+
+# # ------------------- Part 3: Save to JSON -------------------
+
+# output_dir = r"C:/Users/SuryaRaghupathy/OneDrive - Nurtur Limited/Desktop/Git code import/portfolio-website/public/webscrappeddata/gmb local scraper"
+# json_path = os.path.join(output_dir, "places_output.json")
+
+# with open(json_path, "w", encoding="utf-8") as f:
+#     json.dump(all_results, f, indent=4, ensure_ascii=False)
+
+# print(f"\n📁 JSON data saved to: {json_path}")
+
+# # ------------------- Part 4: Convert to CSV -------------------
+
+# csv_path = os.path.join(output_dir, "places_output.csv")
+# df_output = pd.json_normalize(all_results)
+# df_output.to_csv(csv_path, index=False, encoding='utf-8-sig')
+
+# print(f"📁 CSV data saved to: {csv_path}")
+
+# # ------------------- Part 5: Print Summary (Optional) -------------------
+
+# print(f"\n✅ Total queries processed: {len(keyword_list)}")
+# print(f"✅ Total places collected: {len(all_results)}\n")
+
+
+import pandas as pd
+import http.client
+import json
+import time
+import os
+import re
+import ctypes
+import atexit
+
+# Prevent system sleep
+ctypes.windll.kernel32.SetThreadExecutionState(
+    0x80000000 | 0x00000001 | 0x00000040
+)
+
+def restore_sleep():
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+
+atexit.register(restore_sleep)
+
+
+# ------------------- Part 1: Load CSV -------------------
+
+file_path = r'C:/Users/SuryaRaghupathy/OneDrive - Nurtur Limited/Desktop/Git code import/portfolio-website/public/webscrappeddata/gmb local scraper/queries.csv'
+
+df = pd.read_csv(file_path, encoding='windows-1252')
+df.columns = df.columns.str.strip()  # Remove whitespace from headers
+
+print("📋 CSV Columns Detected:", list(df.columns))
+
+required_columns = ['Keywords', 'Brand', 'Branch']
+missing = [col for col in required_columns if col not in df.columns]
+if missing:
+    print(f"❌ Missing columns in CSV: {missing}")
+    exit()
+
+query_data = df[required_columns].dropna().to_dict(orient='records')
+
+print("\n✅ Loaded queries:")
+for row in query_data:
+    print(f"  - Query: {row['Keywords']} | Brand: {row['Brand']} | Branch: {row['Branch']}")
+
+# ------------------- Part 2: Serper API Setup -------------------
+
+conn = http.client.HTTPSConnection("google.serper.dev")
+api_key = '31166f8b78c943e8707103d3ea4964d155f39fe9'  # Replace with your real key
+headers = {
+    'X-API-KEY': api_key,
+    'Content-Type': 'application/json'
+}
+
+all_results = []
+
+# ------------------- Part 3: Loop Through Queries -------------------
+
+for row in query_data:
+    query = row['Keywords']
+    brand = row['Brand']
+    branch = row['Branch']
+
+    print(f"\n🔍 Searching for: {query} (Brand: {brand}, Branch: {branch})")
+
+    page = 1
+    query_result_index = 1
+
+    norm_brand = brand.lower().replace(" ", "")
+    norm_branch = re.sub(r'[^a-zA-Z0-9]', '', branch.lower())
+
+    while True:
+        payload = json.dumps({
+            "q": query,
+            "location": "United Kingdom",
+            "gl": "gb",
+            "page": page
+        })
+
+        conn.request("POST", "/places", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        decoded_data = data.decode("utf-8")
+        json_data = json.loads(decoded_data)
+
+        places = json_data.get("places", [])
+
+        if not places:
+            print(f"✅ No more results for '{query}' on page {page}.")
+            break
+
+        print(f"📄 Page {page}: Found {len(places)} places.")
+
+        for place in places:
+            title = place.get('title', '')
+            norm_title = title.lower().replace(" ", "")
+
+            brand_match = norm_brand in norm_title and norm_branch in norm_title
+
+            place['query'] = query
+            place['brand'] = brand
+            place['branch'] = branch
+            place['query_result_number'] = query_result_index
+            place['brand_match'] = brand_match
+
+            all_results.append(place)
+            query_result_index += 1
+
+        page += 1
+        time.sleep(1)
+
+# ------------------- Part 4: Save JSON -------------------
+
+output_dir = r"C:/Users/SuryaRaghupathy/OneDrive - Nurtur Limited/Desktop/Git code import/portfolio-website/public/webscrappeddata/gmb local scraper"
+json_path = os.path.join(output_dir, "places_output.json")
+
+with open(json_path, "w", encoding="utf-8") as f:
+    json.dump(all_results, f, indent=4, ensure_ascii=False)
+
+print(f"\n📁 JSON saved to: {json_path}")
+
+# ------------------- Part 5: Convert JSON to CSV -------------------
+
+csv_path = os.path.join(output_dir, "places_output.csv")
+df_output = pd.json_normalize(all_results)
+df_output.to_csv(csv_path, index=False, encoding='utf-8-sig')
+
+print(f"📁 CSV saved to: {csv_path}")
+
+# ------------------- Part 6: Export Brand Matches -------------------
+
+grouped = df_output.groupby(['query', 'brand', 'branch'])
+matched_rows = []
+
+for (query, brand, branch), group in grouped:
+    matched = group[group['brand_match'] == True]
+
+    if not matched.empty:
+        matched_rows.append(matched)
+    else:
+        na_row = {
+            'query': query,
+            'brand': brand,
+            'branch': branch,
+            'brand_match': False
+        }
+        for col in df_output.columns:
+            if col not in na_row:
+                na_row[col] = 'N/A'
+        matched_rows.append(pd.DataFrame([na_row]))
+
+final_df = pd.concat(matched_rows, ignore_index=True)
+
+match_csv_path = os.path.join(output_dir, "places_brand_matches.csv")
+final_df.to_csv(match_csv_path, index=False, encoding='utf-8-sig')
+
+print(f"📁 Filtered CSV with brand matches saved to: {match_csv_path}")
+
+# ------------------- Summary -------------------
+
+print(f"\n✅ Total queries processed: {len(query_data)}")
+print(f"✅ Total places collected: {len(all_results)}")

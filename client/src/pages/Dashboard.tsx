@@ -10,6 +10,12 @@ import ProcessingHistory from '@/components/ProcessingHistory';
 import ConsoleOutput from '@/components/ConsoleOutput';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import { SaveIcon } from 'lucide-react';
 import { COUNTRIES } from '@/lib/countries';
 import { LANGUAGES } from '@/lib/languages';
 import logo from '@assets/images-removebg-preview_1762837081677.png';
@@ -26,6 +32,7 @@ interface HistoryItem {
 }
 
 export default function Dashboard() {
+  const { toast } = useToast();
   const [state, setState] = useState<ProcessingState>('idle');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewData, setPreviewData] = useState<string[][]>([]);
@@ -46,6 +53,10 @@ export default function Dashboard() {
   const [fullResultsData, setFullResultsData] = useState<any[]>([]);
   const [selectedCountry, setSelectedCountry] = useState<string>('gb');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en');
+  const [showSaveCampaignDialog, setShowSaveCampaignDialog] = useState(false);
+  const [campaignName, setCampaignName] = useState('');
+  const [campaignDescription, setCampaignDescription] = useState('');
+  const [processedQueryData, setProcessedQueryData] = useState<any[]>([]);
 
   const handleFileSelect = useCallback((file: File) => {
     setSelectedFile(file);
@@ -173,6 +184,13 @@ export default function Dashboard() {
               }
               
               setResultsData(Array.from(queryMap.values()).slice(0, 100));
+              
+              const uniqueQueries = Array.from(queryMap.values()).map(item => ({
+                Keywords: item.query,
+                Brand: item.brand,
+                Branch: item.branch,
+              }));
+              setProcessedQueryData(uniqueQueries);
               
               setHistory(prev => [{
                 id: Date.now().toString(),
@@ -321,6 +339,52 @@ dentists in manchester,Bright Smile,Manchester`;
     URL.revokeObjectURL(url);
   }, []);
 
+  const handleSaveCampaign = useCallback(async () => {
+    if (!campaignName.trim()) {
+      toast({
+        title: "Error",
+        description: "Campaign name is required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: campaignName,
+          description: campaignDescription,
+          queryData: processedQueryData,
+          country: selectedCountry,
+          language: selectedLanguage,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to save campaign');
+
+      const result = await response.json();
+      
+      toast({
+        title: "Campaign Saved",
+        description: `"${campaignName}" has been saved successfully`,
+      });
+
+      setShowSaveCampaignDialog(false);
+      setCampaignName('');
+      setCampaignDescription('');
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save campaign",
+        variant: "destructive",
+      });
+    }
+  }, [campaignName, campaignDescription, processedQueryData, selectedCountry, selectedLanguage, toast]);
+
   return (
     <div className="min-h-screen bg-background">
       <DashboardHeader />
@@ -406,6 +470,17 @@ dentists in manchester,Bright Smile,Manchester`;
                   onProcessAnother={handleRemove}
                 />
                 
+                <div className="flex justify-center">
+                  <Button
+                    onClick={() => setShowSaveCampaignDialog(true)}
+                    variant="outline"
+                    size="lg"
+                  >
+                    <SaveIcon className="w-4 h-4 mr-2" />
+                    Save as Campaign
+                  </Button>
+                </div>
+                
                 {resultsData.length > 0 && (
                   <ResultsPreview
                     data={resultsData}
@@ -457,6 +532,49 @@ dentists in manchester,Bright Smile,Manchester`;
           </div>
         )}
       </main>
+
+      <Dialog open={showSaveCampaignDialog} onOpenChange={setShowSaveCampaignDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save as Campaign</DialogTitle>
+            <DialogDescription>
+              Save this search to re-run it later without uploading a CSV file again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="campaign-name">Campaign Name *</Label>
+              <Input
+                id="campaign-name"
+                placeholder="e.g., Monthly London Rankings"
+                value={campaignName}
+                onChange={(e) => setCampaignName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="campaign-description">Description (optional)</Label>
+              <Textarea
+                id="campaign-description"
+                placeholder="Add notes about this campaign..."
+                value={campaignDescription}
+                onChange={(e) => setCampaignDescription(e.target.value)}
+                rows={3}
+              />
+            </div>
+            <div className="text-sm text-gray-500">
+              This campaign will save {processedQueryData.length} keywords for {selectedCountry} ({selectedLanguage})
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveCampaignDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveCampaign}>
+              Save Campaign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

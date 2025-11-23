@@ -28,7 +28,20 @@ interface PlaceResult {
   branch: string;
   query_result_number: number;
   brand_match: boolean;
+  is_local_pack?: boolean;
+  local_pack_position?: number;
+  device_type?: string;
+  search_latitude?: number;
+  search_longitude?: number;
   [key: string]: any;
+}
+
+interface GeoGridConfig {
+  enabled: boolean;
+  centerLat: number;
+  centerLng: number;
+  radiusKm: number;
+  gridSize: number;
 }
 
 interface ProcessingProgress {
@@ -41,10 +54,30 @@ interface ProcessingProgress {
   currentPage: number;
 }
 
-async function searchSerperPlaces(query: string, gl: string = "gb", hl: string = "en", page: number = 1): Promise<any> {
+async function searchSerperPlaces(
+  query: string, 
+  gl: string = "gb", 
+  hl: string = "en", 
+  page: number = 1,
+  deviceType: string = "desktop",
+  lat?: number,
+  lng?: number
+): Promise<any> {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) {
     throw new Error("SERPER_API_KEY not configured");
+  }
+
+  const payload: any = {
+    q: query,
+    gl: gl,
+    hl: hl,
+    page,
+    device: deviceType,
+  };
+
+  if (lat !== undefined && lng !== undefined) {
+    payload.ll = `@${lat},${lng},14z`;
   }
 
   const response = await fetch("https://google.serper.dev/places", {
@@ -53,12 +86,7 @@ async function searchSerperPlaces(query: string, gl: string = "gb", hl: string =
       "X-API-KEY": apiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      q: query,
-      gl: gl,
-      hl: hl,
-      page,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -66,6 +94,25 @@ async function searchSerperPlaces(query: string, gl: string = "gb", hl: string =
   }
 
   return response.json();
+}
+
+function generateGeoGrid(centerLat: number, centerLng: number, radiusKm: number, gridSize: number): Array<{lat: number, lng: number}> {
+  const points: Array<{lat: number, lng: number}> = [];
+  const kmPerDegreeLat = 111.32;
+  const kmPerDegreeLng = 111.32 * Math.cos(centerLat * Math.PI / 180);
+  
+  const latStep = (radiusKm * 2) / (gridSize - 1) / kmPerDegreeLat;
+  const lngStep = (radiusKm * 2) / (gridSize - 1) / kmPerDegreeLng;
+  
+  for (let i = 0; i < gridSize; i++) {
+    for (let j = 0; j < gridSize; j++) {
+      const lat = centerLat - radiusKm / kmPerDegreeLat + (i * latStep);
+      const lng = centerLng - radiusKm / kmPerDegreeLng + (j * lngStep);
+      points.push({ lat, lng });
+    }
+  }
+  
+  return points;
 }
 
 function parseCSV(content: string): QueryRow[] {
@@ -131,7 +178,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const csvContent = req.file.buffer.toString('utf-8');
       const gl = req.body.gl || 'gb';
       const hl = req.body.hl || 'en';
+      const deviceType = req.body.deviceType || 'desktop';
       const projectId = req.body.projectId || null;
+      const geoGridEnabled = req.body.geoGridEnabled === 'true' || req.body.geoGridEnabled === true;
+      const geoGridConfig = geoGridEnabled ? JSON.parse(req.body.geoGridConfig || '{}') : null;
       const queryData = parseCSV(csvContent);
 
       if (queryData.length === 0) {
@@ -143,9 +193,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         csvFilename: req.file.originalname,
         country: gl,
         language: hl,
+        deviceType,
+        geoGridEnabled,
+        geoGridConfig,
         totalQueries: queryData.length,
         totalResults: 0,
         totalBrandMatches: 0,
+        totalLocalPackMatches: 0,
         apiCallsMade: 0,
         status: 'processing',
       });
@@ -209,62 +263,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const normBrand = normalizeBrandName(brand);
         const normBranch = normalizeBranchName(branch);
 
-        let page = 1;
-        let queryResultIndex = 1;
         let foundBrandMatch = false;
         let foundAnyResults = false;
+        let foundLocalPackMatch = false;
 
-        while (true) {
-          const data = await searchSerperPlaces(query, gl, hl, page);
-          totalApiCalls++;
+        const gridPoints = geoGridEnabled && geoGridConfig 
+          ? generateGeoGrid(
+              geoGridConfig.centerLat, 
+              geoGridConfig.centerLng, 
+              geoGridConfig.radiusKm || 5, 
+              geoGridConfig.gridSize || 3
+            )
+          : [{ lat: undefined, lng: undefined }];
 
-          const places = data.places || [];
-          if (places.length === 0) break;
+        for (const gridPoint of gridPoints) {
+          const searchLat = gridPoint.lat;
+          const searchLng = gridPoint.lng;
 
-          foundAnyResults = true;
+          let page = 1;
+          let queryResultIndex = 1;
 
-          for (const place of places) {
-            const title = place.title || '';
-            const normTitle = title.toLowerCase().replace(/\s/g, '');
+          while (true) {
+            const data = await searchSerperPlaces(query, gl, hl, page, deviceType, searchLat, searchLng);
+            totalApiCalls++;
 
-            const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+            const places = data.places || [];
+            if (places.length === 0) break;
 
-            if (brandMatch) {
-              foundBrandMatch = true;
-              console.log(`  ✓ Brand match found at position ${queryResultIndex}: "${title}"`);
+            foundAnyResults = true;
+
+            for (const place of places) {
+              const title = place.title || '';
+              const normTitle = title.toLowerCase().replace(/\s/g, '');
+
+              const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+              const isLocalPack = queryResultIndex <= 3;
+              const localPackPosition = isLocalPack ? queryResultIndex : null;
+
+              if (brandMatch) {
+                foundBrandMatch = true;
+                if (isLocalPack) foundLocalPackMatch = true;
+                const packInfo = isLocalPack ? ` (Local Pack #${localPackPosition})` : '';
+                const gridInfo = searchLat ? ` @ (${searchLat.toFixed(4)}, ${searchLng.toFixed(4)})` : '';
+                console.log(`  ✓ Brand match found at position ${queryResultIndex}${packInfo}${gridInfo}: "${title}"`);
+              }
+
+              allResults.push({
+                ...place,
+                query,
+                brand,
+                branch,
+                query_result_number: queryResultIndex,
+                brand_match: brandMatch,
+                is_local_pack: isLocalPack,
+                local_pack_position: localPackPosition,
+                device_type: deviceType,
+                search_latitude: searchLat,
+                search_longitude: searchLng,
+              });
+
+              queryResultIndex++;
             }
 
-            allResults.push({
-              ...place,
-              query,
-              brand,
-              branch,
-              query_result_number: queryResultIndex,
-              brand_match: brandMatch,
+            page++;
+            
+            const elapsedNow = (Date.now() - startTime) / 1000;
+            const qpsNow = (i + 1) / elapsedNow;
+            const remainingNow = Math.ceil((queryData.length - (i + 1)) / qpsNow);
+
+            sendProgress({
+              type: 'progress',
+              currentQuery: query,
+              totalQueries: queryData.length,
+              processedQueries: i + 1,
+              queriesPerSecond: Number(qpsNow.toFixed(2)),
+              estimatedTimeRemaining: remainingNow,
+              apiCallsMade: totalApiCalls,
+              currentPage: page,
+              progress: Math.round(((i + 1) / queryData.length) * 100),
             });
 
-            queryResultIndex++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
-
-          page++;
-          
-          const elapsedNow = (Date.now() - startTime) / 1000;
-          const qpsNow = (i + 1) / elapsedNow;
-          const remainingNow = Math.ceil((queryData.length - (i + 1)) / qpsNow);
-
-          sendProgress({
-            type: 'progress',
-            currentQuery: query,
-            totalQueries: queryData.length,
-            processedQueries: i + 1,
-            queriesPerSecond: Number(qpsNow.toFixed(2)),
-            estimatedTimeRemaining: remainingNow,
-            apiCallsMade: totalApiCalls,
-            currentPage: page,
-            progress: Math.round(((i + 1) / queryData.length) * 100),
-          });
-
-          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         if (!foundBrandMatch) {
@@ -297,6 +377,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               brand: r.brand,
               branch: r.branch,
               rankingPosition: typeof r.query_result_number === 'number' ? r.query_result_number : null,
+              isLocalPack: r.is_local_pack || false,
+              localPackPosition: r.local_pack_position || null,
+              deviceType: r.device_type || deviceType,
+              searchLatitude: r.search_latitude ? String(r.search_latitude) : null,
+              searchLongitude: r.search_longitude ? String(r.search_longitude) : null,
               title: r.title || null,
               address: r.address || null,
               rating: r.rating ? String(r.rating) : null,
@@ -315,6 +400,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               brand: r.brand,
               branch: r.branch,
               rankingPosition: null,
+              isLocalPack: false,
+              localPackPosition: null,
+              deviceType: deviceType,
+              searchLatitude: null,
+              searchLongitude: null,
               title: 'Brand not found',
               address: null,
               rating: null,
@@ -330,6 +420,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateSearch(searchId, {
             totalResults: allResults.length,
             totalBrandMatches: allResults.filter(r => r.brand_match).length,
+            totalLocalPackMatches: allResults.filter(r => r.is_local_pack && r.brand_match).length,
             apiCallsMade: totalApiCalls,
             processingTimeSeconds: String(processingTime),
             status: 'completed',
@@ -384,6 +475,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const csvContent = req.file.buffer.toString('utf-8');
       const gl = req.body.gl || 'gb';
       const hl = req.body.hl || 'en';
+      const deviceType = req.body.deviceType || 'desktop';
+      const geoGridEnabled = req.body.geoGridEnabled === 'true' || req.body.geoGridEnabled === true;
+      const geoGridConfig = geoGridEnabled ? JSON.parse(req.body.geoGridConfig || '{}') : null;
       const queryData = parseCSV(csvContent);
 
       if (queryData.length === 0) {
@@ -402,45 +496,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const normBrand = normalizeBrandName(brand);
         const normBranch = normalizeBranchName(branch);
 
-        let page = 1;
-        let queryResultIndex = 1;
         let foundBrandMatch = false;
         let foundAnyResults = false;
+        let foundLocalPackMatch = false;
 
-        while (true) {
-          const data = await searchSerperPlaces(query, gl, hl, page);
-          totalApiCalls++;
+        const gridPoints = geoGridEnabled && geoGridConfig 
+          ? generateGeoGrid(
+              geoGridConfig.centerLat, 
+              geoGridConfig.centerLng, 
+              geoGridConfig.radiusKm || 5, 
+              geoGridConfig.gridSize || 3
+            )
+          : [{ lat: undefined, lng: undefined }];
 
-          const places = data.places || [];
-          if (places.length === 0) break;
+        for (const gridPoint of gridPoints) {
+          const searchLat = gridPoint.lat;
+          const searchLng = gridPoint.lng;
 
-          foundAnyResults = true;
+          let page = 1;
+          let queryResultIndex = 1;
 
-          for (const place of places) {
-            const title = place.title || '';
-            const normTitle = title.toLowerCase().replace(/\s/g, '');
+          while (true) {
+            const data = await searchSerperPlaces(query, gl, hl, page, deviceType, searchLat, searchLng);
+            totalApiCalls++;
 
-            const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+            const places = data.places || [];
+            if (places.length === 0) break;
 
-            if (brandMatch) {
-              foundBrandMatch = true;
-              console.log(`  ✓ Brand match found at position ${queryResultIndex}: "${title}"`);
+            foundAnyResults = true;
+
+            for (const place of places) {
+              const title = place.title || '';
+              const normTitle = title.toLowerCase().replace(/\s/g, '');
+
+              const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+              const isLocalPack = queryResultIndex <= 3;
+              const localPackPosition = isLocalPack ? queryResultIndex : null;
+
+              if (brandMatch) {
+                foundBrandMatch = true;
+                if (isLocalPack) foundLocalPackMatch = true;
+                const packInfo = isLocalPack ? ` (Local Pack #${localPackPosition})` : '';
+                const gridInfo = searchLat ? ` @ (${searchLat.toFixed(4)}, ${searchLng.toFixed(4)})` : '';
+                console.log(`  ✓ Brand match found at position ${queryResultIndex}${packInfo}${gridInfo}: "${title}"`);
+              }
+
+              allResults.push({
+                ...place,
+                query,
+                brand,
+                branch,
+                query_result_number: queryResultIndex,
+                brand_match: brandMatch,
+                is_local_pack: isLocalPack,
+                local_pack_position: localPackPosition,
+                device_type: deviceType,
+                search_latitude: searchLat,
+                search_longitude: searchLng,
+              });
+
+              queryResultIndex++;
             }
 
-            allResults.push({
-              ...place,
-              query,
-              brand,
-              branch,
-              query_result_number: queryResultIndex,
-              brand_match: brandMatch,
-            });
-
-            queryResultIndex++;
+            page++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
-
-          page++;
-          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         if (!foundBrandMatch) {
@@ -551,15 +671,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const queryData = campaign.queryData as any[];
       const gl = campaign.country || 'gb';
       const hl = campaign.language || 'en';
+      const deviceType = req.body.deviceType || 'desktop';
+      const geoGridEnabled = req.body.geoGridEnabled === 'true' || req.body.geoGridEnabled === true || false;
+      const geoGridConfig = geoGridEnabled ? JSON.parse(req.body.geoGridConfig || '{}') : null;
 
       const search = await storage.createSearch({
         projectId: id,
         csvFilename: `${campaign.name} - Rerun`,
         country: gl,
         language: hl,
+        deviceType,
+        geoGridEnabled,
+        geoGridConfig,
         totalQueries: queryData.length,
         totalResults: 0,
         totalBrandMatches: 0,
+        totalLocalPackMatches: 0,
         apiCallsMade: 0,
         status: 'processing',
       });
@@ -576,42 +703,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const normBrand = normalizeBrandName(brand);
         const normBranch = normalizeBranchName(branch);
 
-        let page = 1;
-        let queryResultIndex = 1;
         let foundBrandMatch = false;
+        let foundLocalPackMatch = false;
 
-        while (true) {
-          const data = await searchSerperPlaces(query, gl, hl, page);
-          totalApiCalls++;
+        const gridPoints = geoGridEnabled && geoGridConfig 
+          ? generateGeoGrid(
+              geoGridConfig.centerLat, 
+              geoGridConfig.centerLng, 
+              geoGridConfig.radiusKm || 5, 
+              geoGridConfig.gridSize || 3
+            )
+          : [{ lat: undefined, lng: undefined }];
 
-          const places = data.places || [];
-          if (places.length === 0) break;
+        for (const gridPoint of gridPoints) {
+          const searchLat = gridPoint.lat;
+          const searchLng = gridPoint.lng;
 
-          for (const place of places) {
-            const title = place.title || '';
-            const normTitle = title.toLowerCase().replace(/\s/g, '');
+          let page = 1;
+          let queryResultIndex = 1;
 
-            const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+          while (true) {
+            const data = await searchSerperPlaces(query, gl, hl, page, deviceType, searchLat, searchLng);
+            totalApiCalls++;
 
-            if (brandMatch) {
-              foundBrandMatch = true;
-              console.log(`  ✓ Brand match found at position ${queryResultIndex}: "${title}"`);
+            const places = data.places || [];
+            if (places.length === 0) break;
+
+            for (const place of places) {
+              const title = place.title || '';
+              const normTitle = title.toLowerCase().replace(/\s/g, '');
+
+              const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+              const isLocalPack = queryResultIndex <= 3;
+              const localPackPosition = isLocalPack ? queryResultIndex : null;
+
+              if (brandMatch) {
+                foundBrandMatch = true;
+                if (isLocalPack) foundLocalPackMatch = true;
+                const packInfo = isLocalPack ? ` (Local Pack #${localPackPosition})` : '';
+                const gridInfo = searchLat ? ` @ (${searchLat.toFixed(4)}, ${searchLng.toFixed(4)})` : '';
+                console.log(`  ✓ Brand match found at position ${queryResultIndex}${packInfo}${gridInfo}: "${title}"`);
+              }
+
+              allResults.push({
+                ...place,
+                query,
+                brand,
+                branch,
+                query_result_number: queryResultIndex,
+                brand_match: brandMatch,
+                is_local_pack: isLocalPack,
+                local_pack_position: localPackPosition,
+                device_type: deviceType,
+                search_latitude: searchLat,
+                search_longitude: searchLng,
+              });
+
+              queryResultIndex++;
             }
 
-            allResults.push({
-              ...place,
-              query,
-              brand,
-              branch,
-              query_result_number: queryResultIndex,
-              brand_match: brandMatch,
-            });
-
-            queryResultIndex++;
+            page++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
-
-          page++;
-          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         if (!foundBrandMatch) {
@@ -641,6 +794,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           brand: r.brand,
           branch: r.branch,
           rankingPosition: typeof r.query_result_number === 'number' ? r.query_result_number : null,
+          isLocalPack: r.is_local_pack || false,
+          localPackPosition: r.local_pack_position || null,
+          deviceType: r.device_type || deviceType,
+          searchLatitude: r.search_latitude ? String(r.search_latitude) : null,
+          searchLongitude: r.search_longitude ? String(r.search_longitude) : null,
           title: r.title || null,
           address: r.address || null,
           rating: r.rating ? String(r.rating) : null,
@@ -659,6 +817,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           brand: r.brand,
           branch: r.branch,
           rankingPosition: null,
+          isLocalPack: false,
+          localPackPosition: null,
+          deviceType: deviceType,
+          searchLatitude: null,
+          searchLongitude: null,
           title: 'Brand not found',
           address: null,
           rating: null,
@@ -674,6 +837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateSearch(search.id, {
         totalResults: allResults.length,
         totalBrandMatches: allResults.filter(r => r.brand_match).length,
+        totalLocalPackMatches: allResults.filter(r => r.is_local_pack && r.brand_match).length,
         apiCallsMade: totalApiCalls,
         processingTimeSeconds: String(processingTime),
         status: 'completed',

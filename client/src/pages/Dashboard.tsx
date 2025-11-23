@@ -53,6 +53,14 @@ export default function Dashboard() {
   const [fullResultsData, setFullResultsData] = useState<any[]>([]);
   const [selectedCountry, setSelectedCountry] = useState<string>('gb');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en');
+  const [deviceType, setDeviceType] = useState<string>('desktop');
+  const [geoGridEnabled, setGeoGridEnabled] = useState<boolean>(false);
+  const [geoGridConfig, setGeoGridConfig] = useState({
+    centerLat: 51.5074,
+    centerLng: -0.1278,
+    radiusKm: 5,
+    gridSize: 3,
+  });
   const [showSaveCampaignDialog, setShowSaveCampaignDialog] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [campaignDescription, setCampaignDescription] = useState('');
@@ -104,6 +112,11 @@ export default function Dashboard() {
       formData.append('file', selectedFile);
       formData.append('gl', selectedCountry);
       formData.append('hl', selectedLanguage);
+      formData.append('deviceType', deviceType);
+      formData.append('geoGridEnabled', String(geoGridEnabled));
+      if (geoGridEnabled) {
+        formData.append('geoGridConfig', JSON.stringify(geoGridConfig));
+      }
 
       console.log('[UPLOAD] Sending request to /api/process-csv-stream');
       const response = await fetch('/api/process-csv-stream', {
@@ -434,6 +447,83 @@ dentists in manchester,Bright Smile,Manchester`;
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">
+                      Device Type
+                    </label>
+                    <Select value={deviceType} onValueChange={setDeviceType}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select device type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="desktop">Desktop</SelectItem>
+                        <SelectItem value="mobile">Mobile</SelectItem>
+                        <SelectItem value="tablet">Tablet</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="border border-border rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-foreground">
+                        Geo-Grid Tracking (Advanced)
+                      </label>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={geoGridEnabled}
+                          onChange={(e) => setGeoGridEnabled(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                    {geoGridEnabled && (
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Center Latitude</label>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={geoGridConfig.centerLat}
+                            onChange={(e) => setGeoGridConfig({ ...geoGridConfig, centerLat: parseFloat(e.target.value) })}
+                            className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Center Longitude</label>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={geoGridConfig.centerLng}
+                            onChange={(e) => setGeoGridConfig({ ...geoGridConfig, centerLng: parseFloat(e.target.value) })}
+                            className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Radius (km)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={geoGridConfig.radiusKm}
+                            onChange={(e) => setGeoGridConfig({ ...geoGridConfig, radiusKm: parseInt(e.target.value) })}
+                            className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-muted-foreground mb-1">Grid Size (3x3, 4x4, etc.)</label>
+                          <input
+                            type="number"
+                            min="2"
+                            max="5"
+                            value={geoGridConfig.gridSize}
+                            onChange={(e) => setGeoGridConfig({ ...geoGridConfig, gridSize: parseInt(e.target.value) })}
+                            className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <FileUploadZone

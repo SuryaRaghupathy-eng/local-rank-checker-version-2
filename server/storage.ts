@@ -118,6 +118,18 @@ export class PostgresStorage implements IStorage {
     if (normalizedSearch.recurringInterval === undefined) {
       normalizedSearch.recurringInterval = null;
     }
+    if (normalizedSearch.deviceType === undefined) {
+      normalizedSearch.deviceType = 'desktop';
+    }
+    if (normalizedSearch.geoGridEnabled === undefined) {
+      normalizedSearch.geoGridEnabled = false;
+    }
+    if (normalizedSearch.geoGridConfig === undefined) {
+      normalizedSearch.geoGridConfig = null;
+    }
+    if (normalizedSearch.totalLocalPackMatches === undefined) {
+      normalizedSearch.totalLocalPackMatches = 0;
+    }
     
     const result = await this.db.insert(searches).values(normalizedSearch).returning();
     return result[0];
@@ -288,6 +300,10 @@ export class MemStorage implements IStorage {
       status: search.status ?? 'completed',
       country: search.country ?? 'gb',
       language: search.language ?? 'en',
+      deviceType: search.deviceType ?? 'desktop',
+      geoGridEnabled: search.geoGridEnabled ?? false,
+      geoGridConfig: search.geoGridConfig ?? null,
+      totalLocalPackMatches: search.totalLocalPackMatches ?? 0,
       isRecurring: search.isRecurring ?? false,
       projectId: search.projectId ?? null,
       processingTimeSeconds: search.processingTimeSeconds ?? null,
@@ -336,6 +352,11 @@ export class MemStorage implements IStorage {
     const newResult: RankingResult = {
       ...result,
       rankingPosition: result.rankingPosition ?? null,
+      isLocalPack: result.isLocalPack ?? false,
+      localPackPosition: result.localPackPosition ?? null,
+      deviceType: result.deviceType ?? 'desktop',
+      searchLatitude: result.searchLatitude ?? null,
+      searchLongitude: result.searchLongitude ?? null,
       title: result.title ?? null,
       address: result.address ?? null,
       rating: result.rating ?? null,

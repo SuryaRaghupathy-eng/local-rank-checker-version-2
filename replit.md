@@ -4,12 +4,21 @@
 
 A web application designed for processing CSV files containing location and business search queries. It enables users to upload CSVs with keywords, brands, and branch information, which are then used to search the Google Places API. The system performs brand matching on the search results and generates comprehensive, downloadable reports in various formats (CSV, JSON, Excel). The application aims for a clean, efficient, and productivity-focused user experience.
 
+## Recent Updates (November 23, 2025)
+
+### Local SEO Features Added
+- **Device Type Tracking**: Mobile vs Desktop vs Tablet ranking differentiation
+- **Local Pack Identification**: Automatically flags top 3 results as "Local Pack" positions
+- **Geo-Grid Support**: Single-point geo-targeting with latitude/longitude coordinates
+- **Enhanced Database Schema**: Stores device type, Local Pack flags, and search coordinates
+
 ## Setup Status
 
 ✅ Database: PostgreSQL provisioned and schema migrated
 ✅ API Key: SERPER_API_KEY configured
 ✅ Workflow: Running on port 5000
 ✅ Deployment: Configured for autoscale deployment
+✅ Local SEO Features: Device type, Local Pack tracking, Geo-grid (single point)
 
 ## User Preferences
 

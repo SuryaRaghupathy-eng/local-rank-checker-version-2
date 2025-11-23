@@ -495,15 +495,207 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/projects", async (req, res) => {
     try {
-      const { name, description } = req.body;
+      const { name, description, queryData, country, language } = req.body;
       if (!name) {
         return res.status(400).json({ error: "Project name is required" });
       }
-      const project = await storage.createProject({ name, description });
+      const project = await storage.createProject({ name, description, queryData, country, language });
       res.json({ success: true, data: project });
     } catch (error: any) {
       console.error("Error creating project:", error);
       res.status(500).json({ error: error.message || "Failed to create project" });
+    }
+  });
+
+  app.get("/api/campaigns/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getProject(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+      
+      const searches = await storage.getSearchesByProject(id);
+      
+      res.json({ 
+        success: true, 
+        data: {
+          campaign,
+          searches,
+          stats: {
+            totalSearches: searches.length,
+            lastRun: searches.length > 0 ? searches[0].createdAt : null,
+          }
+        }
+      });
+    } catch (error: any) {
+      console.error("Error fetching campaign:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch campaign" });
+    }
+  });
+
+  app.post("/api/campaigns/:id/rerun", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getProject(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+
+      if (!campaign.queryData) {
+        return res.status(400).json({ error: "Campaign has no saved query data" });
+      }
+
+      const queryData = campaign.queryData as any[];
+      const gl = campaign.country || 'gb';
+      const hl = campaign.language || 'en';
+
+      const search = await storage.createSearch({
+        projectId: id,
+        csvFilename: `${campaign.name} - Rerun`,
+        country: gl,
+        language: hl,
+        totalQueries: queryData.length,
+        totalResults: 0,
+        totalBrandMatches: 0,
+        apiCallsMade: 0,
+        status: 'processing',
+      });
+
+      const allResults: PlaceResult[] = [];
+      let totalApiCalls = 0;
+      const startTime = Date.now();
+
+      for (let i = 0; i < queryData.length; i++) {
+        const { Keywords: query, Brand: brand, Branch: branch } = queryData[i];
+        
+        console.log(`Processing query ${i + 1}/${queryData.length}: "${query}" for brand "${brand}" - "${branch}"`);
+        
+        const normBrand = normalizeBrandName(brand);
+        const normBranch = normalizeBranchName(branch);
+
+        let page = 1;
+        let queryResultIndex = 1;
+        let foundBrandMatch = false;
+
+        while (true) {
+          const data = await searchSerperPlaces(query, gl, hl, page);
+          totalApiCalls++;
+
+          const places = data.places || [];
+          if (places.length === 0) break;
+
+          for (const place of places) {
+            const title = place.title || '';
+            const normTitle = title.toLowerCase().replace(/\s/g, '');
+
+            const brandMatch = normTitle.includes(normBrand) && normTitle.includes(normBranch);
+
+            if (brandMatch) {
+              foundBrandMatch = true;
+              console.log(`  ✓ Brand match found at position ${queryResultIndex}: "${title}"`);
+            }
+
+            allResults.push({
+              ...place,
+              query,
+              brand,
+              branch,
+              query_result_number: queryResultIndex,
+              brand_match: brandMatch,
+            });
+
+            queryResultIndex++;
+          }
+
+          page++;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+        if (!foundBrandMatch) {
+          console.log(`  ✗ No brand match found for "${query}" - adding N/A entry`);
+          allResults.push({
+            title: 'Brand not found',
+            address: 'N/A',
+            rating: undefined,
+            category: 'N/A',
+            query,
+            brand,
+            branch,
+            query_result_number: 'N/A' as any,
+            brand_match: false,
+            local_ranking: 'N/A',
+          });
+        }
+      }
+
+      const processingTime = (Date.now() - startTime) / 1000;
+
+      const rankingResultsToSave = allResults
+        .filter(r => typeof r.query_result_number === 'number')
+        .map(r => ({
+          searchId: search.id,
+          query: r.query,
+          brand: r.brand,
+          branch: r.branch,
+          rankingPosition: typeof r.query_result_number === 'number' ? r.query_result_number : null,
+          title: r.title || null,
+          address: r.address || null,
+          rating: r.rating ? String(r.rating) : null,
+          category: r.category || null,
+          brandMatch: r.brand_match,
+          latitude: r.latitude ? String(r.latitude) : null,
+          longitude: r.longitude ? String(r.longitude) : null,
+          rawData: r,
+        }));
+
+      const noMatchResults = allResults
+        .filter(r => typeof r.query_result_number !== 'number')
+        .map(r => ({
+          searchId: search.id,
+          query: r.query,
+          brand: r.brand,
+          branch: r.branch,
+          rankingPosition: null,
+          title: 'Brand not found',
+          address: null,
+          rating: null,
+          category: null,
+          brandMatch: false,
+          latitude: null,
+          longitude: null,
+          rawData: { note: 'No brand match found' },
+        }));
+
+      await storage.createRankingResults([...rankingResultsToSave, ...noMatchResults]);
+
+      await storage.updateSearch(search.id, {
+        totalResults: allResults.length,
+        totalBrandMatches: allResults.filter(r => r.brand_match).length,
+        apiCallsMade: totalApiCalls,
+        processingTimeSeconds: String(processingTime),
+        status: 'completed',
+      });
+
+      res.json({
+        success: true,
+        data: {
+          searchId: search.id,
+          allPlaces: allResults,
+          brandMatches: allResults.filter(r => r.brand_match),
+          stats: {
+            queriesProcessed: queryData.length,
+            placesFound: allResults.length,
+            apiCallsMade: totalApiCalls,
+            processingTimeSeconds: processingTime,
+          },
+        },
+      });
+    } catch (error: any) {
+      console.error("Campaign rerun error:", error);
+      res.status(500).json({ error: error.message || "Failed to rerun campaign" });
     }
   });
 

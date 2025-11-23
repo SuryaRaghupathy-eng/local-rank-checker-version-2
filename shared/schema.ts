@@ -13,6 +13,9 @@ export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   description: text("description"),
+  queryData: jsonb("query_data"),
+  country: varchar("country", { length: 10 }).default('gb'),
+  language: varchar("language", { length: 10 }).default('en'),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

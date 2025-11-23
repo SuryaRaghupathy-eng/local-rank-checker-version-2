@@ -1,4 +1,4 @@
-import { HelpCircle, History } from 'lucide-react';
+import { HelpCircle, History, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ThemeToggle from '@/components/ThemeToggle';
 import { Link, useLocation } from 'wouter';
@@ -12,12 +12,24 @@ import logo from '@assets/images-removebg-preview_1762837081677.png';
 export default function DashboardHeader() {
   const [location] = useLocation();
   const isHistoryPage = location === '/history';
+  const isCampaignsPage = location === '/campaigns';
+  const isDashboard = location === '/';
 
   return (
     <header className="h-16 border-b border-border bg-background sticky top-0 z-50">
       <div className="h-full max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between">
-        <img src={logo} alt="Nurture Logo" className="h-8" />
+        <Link href="/">
+          <img src={logo} alt="Nurture Logo" className="h-8 cursor-pointer" />
+        </Link>
         <div className="flex items-center gap-2">
+          {!isCampaignsPage && (
+            <Link href="/campaigns">
+              <Button variant="ghost" size="sm">
+                <BarChart3 className="w-4 h-4 mr-2" />
+                Campaigns
+              </Button>
+            </Link>
+          )}
           {!isHistoryPage && (
             <Link href="/history">
               <Button variant="ghost" size="sm">

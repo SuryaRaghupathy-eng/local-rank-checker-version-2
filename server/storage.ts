@@ -230,6 +230,9 @@ export class MemStorage implements IStorage {
     const newProject: Project = {
       ...project,
       description: project.description ?? null,
+      queryData: project.queryData ?? null,
+      country: project.country ?? null,
+      language: project.language ?? null,
       id,
       createdAt: new Date(),
       updatedAt: new Date(),

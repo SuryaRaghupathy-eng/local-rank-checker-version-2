@@ -101,17 +101,24 @@ export class PostgresStorage implements IStorage {
   }
 
   async createSearch(search: InsertSearch): Promise<Search> {
-    const normalizedSearch = {
-      ...search,
-      projectId: search.projectId ?? null,
-      status: search.status ?? 'completed',
-      country: search.country ?? 'gb',
-      language: search.language ?? 'en',
-      isRecurring: search.isRecurring ?? false,
-      processingTimeSeconds: search.processingTimeSeconds ?? null,
-      scheduledFor: search.scheduledFor ?? null,
-      recurringInterval: search.recurringInterval ?? null,
-    };
+    const normalizedSearch: any = { ...search };
+    
+    if (normalizedSearch.projectId === undefined) {
+      normalizedSearch.projectId = null;
+    }
+    if (normalizedSearch.isRecurring === undefined) {
+      normalizedSearch.isRecurring = false;
+    }
+    if (normalizedSearch.processingTimeSeconds === undefined) {
+      normalizedSearch.processingTimeSeconds = null;
+    }
+    if (normalizedSearch.scheduledFor === undefined) {
+      normalizedSearch.scheduledFor = null;
+    }
+    if (normalizedSearch.recurringInterval === undefined) {
+      normalizedSearch.recurringInterval = null;
+    }
+    
     const result = await this.db.insert(searches).values(normalizedSearch).returning();
     return result[0];
   }

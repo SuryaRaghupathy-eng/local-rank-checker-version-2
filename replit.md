@@ -1,8 +1,15 @@
-# CSV Data Processor
+# CSV Data Processor - Google Local Rank Checker
 
 ## Overview
 
 A web application designed for processing CSV files containing location and business search queries. It enables users to upload CSVs with keywords, brands, and branch information, which are then used to search the Google Places API. The system performs brand matching on the search results and generates comprehensive, downloadable reports in various formats (CSV, JSON, Excel). The application aims for a clean, efficient, and productivity-focused user experience.
+
+## Setup Status
+
+✅ Database: PostgreSQL provisioned and schema migrated
+✅ API Key: SERPER_API_KEY configured
+✅ Workflow: Running on port 5000
+✅ Deployment: Configured for autoscale deployment
 
 ## User Preferences
 
